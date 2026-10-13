@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.macthemer.borders</string>
+  <key>ProgramArguments</key><array><string>__BINARY__</string></array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <!-- The ring needs no privacy permission, so there is no responsible-process
+       question to answer here; the marker exists so the daemon can tell a
+       supervised start from one typed into a shell. -->
+  <key>EnvironmentVariables</key><dict><key>MACTHEMER_MANAGED</key><string>1</string></dict>
+  <key>StandardErrorPath</key><string>/tmp/macthemer-borders.err</string>
+</dict>
+</plist>

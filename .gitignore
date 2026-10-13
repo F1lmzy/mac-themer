@@ -1,0 +1,12 @@
+# Rendered from theme.toml into the pack directory, because the active-theme
+# symlink points at the pack and consumers resolve it and read these names
+# next to it. Committed theme.toml is the source; these are output.
+themes/*/colors.toml
+themes/*/ghostty.conf
+themes/*/sketchybar.sh
+themes/*/borders.sh
+
+__pycache__/
+*.pyc
+.DS_Store
+/tmp/

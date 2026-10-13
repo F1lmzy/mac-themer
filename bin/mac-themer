@@ -1,0 +1,267 @@
+#!/usr/bin/env python3
+"""mac-themer - theme packs, palette fan-out and the border ring.
+
+One command for the whole desktop look: pick a pack, render every consumer's
+format from it, tell the apps that are running to repaint, and keep the
+machine-readable palette that new consumers read instead of parsing shell.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+
+from macthemer import __version__, apply as apply_mod, palette, paths, render  # noqa: E402
+from macthemer import tokens as tokens_mod  # noqa: E402
+
+
+def die(message):
+    print("mac-themer: %s" % message, file=sys.stderr)
+    raise SystemExit(1)
+
+
+def slugs():
+    found = palette.available(paths.repo_root())
+    if not found:
+        die("no theme packs in %s" % (paths.repo_root() / "themes"))
+    return found
+
+
+def current_slug():
+    for link in (paths.current_link(), paths.compat_dir() / "theme"):
+        if link.is_symlink():
+            return Path(os.readlink(link)).name
+    return None
+
+
+def load(slug=None):
+    found = slugs()
+    wanted = slug or current_slug() or found[0]
+    if wanted not in found:
+        for candidate in found:
+            if palette.load(paths.repo_root(), candidate).name.lower() == wanted.lower():
+                return palette.load(paths.repo_root(), candidate)
+        die("unknown theme %r; available: %s" % (wanted, ", ".join(found)))
+    return palette.load(paths.repo_root(), wanted)
+
+
+def resolved_for(theme):
+    tokens = tokens_mod.tokens_for(theme)
+    return tokens, tokens_mod.bar_for(theme, tokens)
+
+
+def cmd_list(args):
+    found = slugs()
+    if args.json:
+        print(json.dumps([{"slug": slug, "name": palette.load(paths.repo_root(), slug).name}
+                          for slug in found], indent=2))
+        return 0
+    active = current_slug()
+    for slug in found:
+        name = palette.load(paths.repo_root(), slug).name
+        print("%s %s  %s" % ("*" if slug == active else " ", slug, name))
+    return 0
+
+
+def cmd_current(args):
+    if args.json:
+        if not paths.resolved_file().is_file():
+            die("no theme applied yet")
+        print(paths.resolved_file().read_text(), end="")
+        return 0
+    print(current_slug() or "none")
+    return 0
+
+
+def cmd_dump(args):
+    theme = load(args.slug)
+    tokens, bar = resolved_for(theme)
+    if args.json:
+        print(render.resolved_json(theme, tokens, bar), end="")
+        return 0
+    print("theme: %s (%s)" % (theme.name, theme.slug))
+    for key in sorted(theme.palette):
+        print("palette.%-22s %s" % (key, theme.palette[key]))
+    for key in tokens:
+        print("tokens.%-23s %s" % (key, tokens[key]))
+    print("border.active          %s" % theme.border["active"])
+    print("border.inactive        %s" % theme.border["inactive"])
+    for key in sorted(bar):
+        print("bar.%-26s %s" % (key, bar[key]))
+    return 0
+
+
+def cmd_set(args):
+    theme = load(args.slug)
+    actions = apply_mod.apply(theme, wallpaper=not args.no_wallpaper,
+                              korren_flag=not args.no_korren, reload=not args.no_reload,
+                              index=args.background_index)
+    if args.json:
+        print(json.dumps({"theme": theme.slug, "actions": actions}, indent=2))
+        return 0
+    print("theme: %s (%s)" % (theme.name, theme.slug))
+    for action in actions:
+        print("  %s" % action)
+    return 0
+
+
+def cmd_next(args):
+    found = slugs()
+    active = current_slug()
+    following = found[(found.index(active) + 1) % len(found)] if active in found else found[0]
+    args.slug = following
+    return cmd_set(args)
+
+
+def cmd_bg_next(args):
+    theme = load(args.slug)
+    pictures = apply_mod.backgrounds(theme)
+    if not pictures:
+        die("theme %s has no backgrounds" % theme.slug)
+    if args.path:
+        target = Path(args.path).expanduser().resolve()
+        if not target.is_file():
+            die("no such image: %s" % target)
+    else:
+        target = pictures[0]
+        link = paths.run_dir() / "background"
+        if link.is_symlink():
+            for index, picture in enumerate(pictures):
+                try:
+                    matches = os.path.samefile(picture, link)
+                except OSError:
+                    matches = False
+                if matches:
+                    target = pictures[(index + 1) % len(pictures)]
+                    break
+    apply_mod.remember_background(target)
+    print("background: %s (%s)" % (target.name, apply_mod.set_wallpaper(target)))
+    return 0
+
+
+def cmd_render(args):
+    """Render a pack without touching the desktop. Used by the test suite."""
+    theme = load(args.slug)
+    tokens, bar, written = apply_mod.render_pack(theme)
+    if args.state:
+        state = Path(args.state).expanduser()
+        apply_mod.write_atomic(state / "current.json", render.resolved_json(theme, tokens, bar))
+        apply_mod.relink(state / "current", theme.source.parent)
+    if args.json:
+        print(json.dumps({"theme": theme.slug, "written": written}, indent=2))
+    else:
+        for name in written or ["(already current)"]:
+            print("%s/%s" % (theme.source.parent, name))
+    return 0
+
+
+def launchctl_loaded(label):
+    return subprocess.run(["launchctl", "print", "gui/%d/%s" % (os.getuid(), label)],
+                          capture_output=True).returncode == 0
+
+
+def cmd_doctor(args):
+    repo = paths.repo_root()
+    print("repo:      %s" % repo)
+    print("version:   %s" % __version__)
+    print("packs:     %s" % ", ".join(slugs()))
+    print("state:     %s" % paths.state_dir())
+    print("current:   %s" % (current_slug() or "none"))
+    print("resolved:  %s" % ("present" if paths.resolved_file().is_file() else "missing"))
+    print("compat:    %s" % ("present" if paths.compat_dir().is_dir() else "absent"))
+    print("borders:   %s" % ("loaded" if launchctl_loaded("com.macthemer.borders") else "not loaded"))
+    if launchctl_loaded("com.omacosy.borders"):
+        print("conflict:  com.omacosy.borders is loaded too - two rings will overlap.")
+        print("           run mac-themer install to hand the ring over.")
+    theme_set = paths.bin_dir() / "theme-set"
+    if theme_set.is_symlink():
+        print("theme-set: %s" % os.readlink(theme_set))
+    elif theme_set.exists():
+        print("theme-set: a real file, not a mac-themer symlink (omacosy's?)")
+    else:
+        print("theme-set: not installed")
+    helper = paths.bin_dir() / "omacosy-helper"
+    print("wallpaper: %s" % ("omacosy-helper (preferred)" if helper.is_file() else "osascript fallback"))
+    return 0
+
+
+def cmd_script(args):
+    script = paths.repo_root() / ("%s.sh" % args.action)
+    if not script.is_file():
+        die("no %s in %s" % (script.name, paths.repo_root()))
+    return subprocess.run(["bash", str(script)] + args.rest).returncode
+
+
+def build_parser():
+    parser = argparse.ArgumentParser(prog="mac-themer", description=__doc__.splitlines()[0])
+    parser.add_argument("--version", action="version", version="mac-themer %s" % __version__)
+    sub = parser.add_subparsers(dest="command")
+
+    listing = sub.add_parser("list", help="list installed theme packs")
+    listing.add_argument("--json", action="store_true")
+    listing.set_defaults(handler=cmd_list)
+
+    current = sub.add_parser("current", help="print the active theme")
+    current.add_argument("--json", action="store_true")
+    current.set_defaults(handler=cmd_current)
+
+    dump = sub.add_parser("dump", help="print a pack's resolved palette")
+    dump.add_argument("slug", nargs="?")
+    dump.add_argument("--json", action="store_true")
+    dump.set_defaults(handler=cmd_dump)
+
+    initial = sub.add_parser("set", help="apply a theme pack")
+    initial.add_argument("slug")
+    initial.add_argument("--no-wallpaper", action="store_true")
+    initial.add_argument("--no-korren", action="store_true")
+    initial.add_argument("--no-reload", action="store_true")
+    initial.add_argument("--background-index", type=int, default=0)
+    initial.add_argument("--json", action="store_true")
+    initial.set_defaults(handler=cmd_set)
+
+    following = sub.add_parser("next", help="apply the next pack in order")
+    following.add_argument("--no-wallpaper", action="store_true")
+    following.add_argument("--no-korren", action="store_true")
+    following.add_argument("--no-reload", action="store_true")
+    following.add_argument("--background-index", type=int, default=0)
+    following.add_argument("--json", action="store_true")
+    following.set_defaults(handler=cmd_next)
+
+    background = sub.add_parser("bg-next", help="cycle the theme's backgrounds")
+    background.add_argument("path", nargs="?")
+    background.add_argument("--slug")
+    background.set_defaults(handler=cmd_bg_next)
+
+    render_cmd = sub.add_parser("render", help="render a pack's files without applying")
+    render_cmd.add_argument("slug", nargs="?")
+    render_cmd.add_argument("--state")
+    render_cmd.add_argument("--json", action="store_true")
+    render_cmd.set_defaults(handler=cmd_render)
+
+    doctor = sub.add_parser("doctor", help="report state and conflicting installs")
+    doctor.set_defaults(handler=cmd_doctor)
+
+    for action, help_text in (("install", "build the border ring and wire the CLI up"),
+                              ("uninstall", "remove the border ring and the symlinks")):
+        script = sub.add_parser(action, help=help_text)
+        script.add_argument("rest", nargs=argparse.REMAINDER)
+        script.set_defaults(handler=cmd_script, action=action)
+    return parser
+
+
+def main(argv=None):
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if not getattr(args, "handler", None):
+        parser.print_help()
+        return 2
+    return args.handler(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

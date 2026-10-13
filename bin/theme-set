@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# theme-set [name] — the omarchy-compatible entry point.
+#
+#   theme-set         list packs
+#   theme-set <name>  apply one
+#
+# Kept as a name because codes that already exist call it: AeroSpace chords,
+# the omacosy bar and the Qt pill each shell out to theme-set or theme-next.
+# mac-themer set <name> does the same thing with a subcommand.
+set -euo pipefail
+SELF="$(readlink -f "${BASH_SOURCE[0]}")"
+HERE="$(dirname "$SELF")"
+if [ "$#" -eq 0 ]; then
+  exec "$HERE/mac-themer" list
+fi
+exec "$HERE/mac-themer" set "$@"

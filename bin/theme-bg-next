@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# theme-bg-next [path] — cycle this theme's backgrounds, or set one exactly.
+set -euo pipefail
+SELF="$(readlink -f "${BASH_SOURCE[0]}")"
+exec "$(dirname "$SELF")/mac-themer" bg-next "$@"

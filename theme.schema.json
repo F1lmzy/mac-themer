@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/F1lmzy/mac-themer/blob/main/theme.schema.json",
+  "title": "mac-themer theme pack",
+  "description": "Schema for themes/<slug>/theme.toml, validated against the parsed TOML. lib/macthemer/palette.py enforces the same rules at runtime and tests/test_render.py asserts the two stay in sync.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name", "palette", "border"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Display name, e.g. \"Catppuccin Mocha\". The directory name is the slug."
+    },
+    "variant": {
+      "enum": ["dark", "light"],
+      "default": "dark"
+    },
+    "palette": {
+      "type": "object",
+      "description": "The base16/ANSI layer terminals need, plus the accent every app-facing surface leans on.",
+      "additionalProperties": false,
+      "propertyNames": {
+        "pattern": "^(background|foreground|cursor|accent|selection_background|selection_foreground|color([0-9]|1[0-5]))$"
+      },
+      "required": [
+        "background",
+        "foreground",
+        "cursor",
+        "accent",
+        "selection_background",
+        "selection_foreground",
+        "color0",
+        "color1",
+        "color2",
+        "color3",
+        "color4",
+        "color5",
+        "color6",
+        "color7",
+        "color8",
+        "color9",
+        "color10",
+        "color11",
+        "color12",
+        "color13",
+        "color14",
+        "color15"
+      ],
+      "additionalProperties": { "$ref": "#/$defs/color" }
+    },
+    "border": {
+      "type": "object",
+      "description": "Ring colours. Explicit per pack rather than derived: whether the inactive ring should be a raised surface or the palette's dimmest tone is a judgement call about that palette.",
+      "additionalProperties": false,
+      "required": ["active", "inactive"],
+      "properties": {
+        "active": { "$ref": "#/$defs/color" },
+        "inactive": { "$ref": "#/$defs/color" }
+      }
+    },
+    "tokens": {
+      "type": "object",
+      "description": "Overrides on the derived semantic roles. Anything not named here comes from lib/macthemer/tokens.py, so a pack only states the roles it disagrees with.",
+      "additionalProperties": { "$ref": "#/$defs/color" }
+    },
+    "bar": {
+      "type": "object",
+      "description": "Overrides on the derived bar vocabulary. Semantic colours default to the bright ANSI ramp; red, green and yellow eventually want a per-palette eye.",
+      "additionalProperties": false,
+      "properties": {
+        "background_alpha": { "type": "number", "minimum": 0, "maximum": 1 },
+        "background": { "$ref": "#/$defs/color" },
+        "item_bg": { "$ref": "#/$defs/color" },
+        "accent": { "$ref": "#/$defs/color" },
+        "label": { "$ref": "#/$defs/color" },
+        "icon": { "$ref": "#/$defs/color" },
+        "muted": { "$ref": "#/$defs/color" },
+        "red": { "$ref": "#/$defs/color" },
+        "green": { "$ref": "#/$defs/color" },
+        "yellow": { "$ref": "#/$defs/color" }
+      }
+    }
+  },
+  "$defs": {
+    "color": {
+      "type": "string",
+      "pattern": "^#[0-9a-fA-F]{6}$"
+    }
+  }
+}

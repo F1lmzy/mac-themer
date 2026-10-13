@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# theme-next — cycle to the next pack, the omarchy-convention name.
+set -euo pipefail
+SELF="$(readlink -f "${BASH_SOURCE[0]}")"
+exec "$(dirname "$SELF")/mac-themer" next "$@"
