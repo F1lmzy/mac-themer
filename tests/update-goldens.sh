@@ -31,4 +31,4 @@ for slug in palette.available(repo):
     print("wrote %s (%d files)" % (target, len(files)))
 PY
 
-printf '\nNow check the diff:\n  git -C %s diff --stat tests/golden\n' "$REPO_DIR"
+printf '\nNow check the diff:\n  git diff --stat tests/golden\n'

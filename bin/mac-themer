@@ -33,9 +33,9 @@ def slugs():
 
 
 def current_slug():
-    for link in (paths.current_link(), paths.compat_dir() / "theme"):
-        if link.is_symlink():
-            return Path(os.readlink(link)).name
+    link = paths.current_link()
+    if link.is_symlink():
+        return Path(os.readlink(link)).name
     return None
 
 
@@ -165,6 +165,23 @@ def launchctl_loaded(label):
                           capture_output=True).returncode == 0
 
 
+def other_ring_agents():
+    """Any loaded agent that looks like a second ring daemon.
+
+    mac-themer manages only its own agent. If something else is drawing a ring
+    too, the honest move is to name it and let you decide, not to reach over and
+    stop another project's service.
+    """
+    result = subprocess.run(["launchctl", "list"], capture_output=True, text=True)
+    found = set()
+    for line in result.stdout.splitlines():
+        fields = line.split()
+        if len(fields) >= 3 and "borders" in fields[2].lower() \
+                and fields[2] != "com.macthemer.borders":
+            found.add(fields[2])
+    return sorted(found)
+
+
 def cmd_doctor(args):
     repo = paths.repo_root()
     print("repo:      %s" % repo)
@@ -173,20 +190,24 @@ def cmd_doctor(args):
     print("state:     %s" % paths.state_dir())
     print("current:   %s" % (current_slug() or "none"))
     print("resolved:  %s" % ("present" if paths.resolved_file().is_file() else "missing"))
-    print("compat:    %s" % ("present" if paths.compat_dir().is_dir() else "absent"))
+    print("ghostty:   %s" % ("present" if paths.ghostty_fragment().is_file() else "missing"))
     print("borders:   %s" % ("loaded" if launchctl_loaded("com.macthemer.borders") else "not loaded"))
-    if launchctl_loaded("com.omacosy.borders"):
-        print("conflict:  com.omacosy.borders is loaded too - two rings will overlap.")
-        print("           run mac-themer install to hand the ring over.")
+    for label in other_ring_agents():
+        print("conflict:  %s is loaded too - two rings will overlap." % label)
     theme_set = paths.bin_dir() / "theme-set"
     if theme_set.is_symlink():
         print("theme-set: %s" % os.readlink(theme_set))
     elif theme_set.exists():
-        print("theme-set: a real file, not a mac-themer symlink (omacosy's?)")
+        print("theme-set: a real file, not a mac-themer symlink")
     else:
         print("theme-set: not installed")
-    helper = paths.bin_dir() / "omacosy-helper"
-    print("wallpaper: %s" % ("omacosy-helper (preferred)" if helper.is_file() else "osascript fallback"))
+    if apply_mod.wallpaper_helper() is not None:
+        print("wallpaper: %s" % apply_mod.wallpaper_helper())
+    else:
+        print("wallpaper: osascript fallback (run install.sh to build the helper)")
+    background = paths.backgrounds_link()
+    if background.is_symlink():
+        print("background: %s" % os.readlink(background))
     return 0
 
 

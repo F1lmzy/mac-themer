@@ -52,9 +52,7 @@ done
 
 export MACTHEMER_REPO="$sandbox" \
        MACTHEMER_STATE="$TMP/state" \
-       MACTHEMER_COMPAT="$TMP/compat" \
        MACTHEMER_RUN="$TMP/run" \
-       MACTHEMER_LEGACY_RUN="$TMP/legacy" \
        MACTHEMER_HOME="$TMP/home" \
        MACTHEMER_BIN="$TMP/bin" \
        MACTHEMER_AGENTS="$TMP/agents" \
@@ -79,11 +77,19 @@ assert len(resolved["palette"]) == 22, len(resolved["palette"])
 PY
 ok "resolved palette carries border, tokens and the palette"
 
-[ -L "$TMP/compat/theme" ] || fail "no omarchy-convention theme symlink"
-[ -f "$TMP/compat/theme/sketchybar.sh" ] || fail "the compat symlink does not resolve to the pack"
-[ -f "$TMP/compat/ghostty.conf" ] || fail "no compat ghostty.conf"
-grep -q '^export ACCENT=0xffcba6f7$' "$TMP/compat/theme/sketchybar.sh" || fail "compat bar palette is wrong"
-ok "a consumer wired to the omarchy convention still resolves its files"
+[ -L "$TMP/state/current" ] || fail "no current symlink"
+[ -f "$TMP/state/current/colors.toml" ] || fail "current does not resolve to the pack"
+[ -f "$TMP/state/ghostty.conf" ] || fail "no ghostty fragment in the state directory"
+grep -q '^background = #1e1e2e$' "$TMP/state/ghostty.conf" || fail "the ghostty fragment is wrong"
+ok "current resolves to the pack and the Ghostty fragment is in place"
+
+# The state mac-themer publishes is entirely its own. If a previous setup's
+# convention ever comes back, this is where it would show up.
+[ -e "$TMP/omarchy" ] && fail "something wrote an omarchy directory"
+for stray in "$TMP/state/theme" "$TMP/state/sketchybar.sh" "$TMP/state/borders.sh"; do
+  [ -e "$stray" ] && fail "unexpected published file: $stray"
+done
+ok "nothing outside mac-themer's own state was written"
 
 "$cli" next >/dev/null
 [ "$("$cli" current)" = "gruvbox" ] || fail "next did not advance the pack"
@@ -93,7 +99,7 @@ ok "a consumer wired to the omarchy convention still resolves its files"
 "$sandbox/bin/theme-set" tokyo-night >/dev/null
 [ "$("$cli" current)" = "tokyo-night" ] || fail "the theme-set wrapper did not apply a pack"
 [ "$("$sandbox/bin/theme-next" | head -1)" != "" ] || fail "the theme-next wrapper produced nothing"
-ok "next wraps, and the omarchy-convention wrappers work"
+ok "next wraps, and the theme-set/theme-next wrappers work"
 
 first="$("$cli" bg-next | sed 's/^background: //; s/ .*//')"
 second="$("$cli" bg-next | sed 's/^background: //; s/ .*//')"

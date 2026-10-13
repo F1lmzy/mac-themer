@@ -1,8 +1,8 @@
 """Where mac-themer keeps things, overridable for tests.
 
 Every path is a function, not a constant: the CLI resolves them once at
-startup, and the test suite points them at a temporary directory so a test
-run never touches the real desktop.
+startup, and the test suite points them at a temporary directory so a test run
+never touches the real desktop.
 """
 from __future__ import annotations
 
@@ -28,28 +28,13 @@ def home():
 
 
 def state_dir():
-    """Canonical mac-themer state: resolved palette, current symlink, config."""
+    """The one place mac-themer publishes state: fragment, palette, config."""
     return _env_path("MACTHEMER_STATE", home() / ".config" / "macthemer")
-
-
-def compat_dir():
-    """The omarchy-convention directory every existing consumer already reads.
-
-    Kept publishing here so a mixed machine (mac-themer themes, an
-    omacosy bar or helper still running) does not go unstyled during the
-    move. Retire it once nothing on the machine reads it.
-    """
-    return _env_path("MACTHEMER_COMPAT", home() / ".config" / "omarchy" / "current")
 
 
 def run_dir():
     """mac-themer's own mutable state: the remembered background, pids."""
     return _env_path("MACTHEMER_RUN", home() / ".local" / "state" / "macthemer")
-
-
-def legacy_run_dir():
-    """omacosy's state dir, still written for its helper's wallpaper resync."""
-    return _env_path("MACTHEMER_LEGACY_RUN", home() / ".local" / "state" / "omacosy")
 
 
 def bin_dir():
@@ -58,10 +43,6 @@ def bin_dir():
 
 def agents_dir():
     return _env_path("MACTHEMER_AGENTS", home() / "Library" / "LaunchAgents")
-
-
-def config_file():
-    return state_dir() / "config.toml"
 
 
 def borders_conf():
@@ -74,3 +55,17 @@ def current_link():
 
 def resolved_file():
     return state_dir() / "current.json"
+
+
+def ghostty_fragment():
+    """The palette fragment Ghostty is told to load by config-file.
+
+    It lives in the state directory rather than beside the pack because it is
+    the path written into the user's Ghostty config: a stable location means a
+    theme switch never has to rewrite that config.
+    """
+    return state_dir() / "ghostty.conf"
+
+
+def backgrounds_link():
+    return run_dir() / "background"

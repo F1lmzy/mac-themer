@@ -3,36 +3,31 @@
 Each renderer is a pure function of a resolved pack. That is what makes the
 generated files testable — same input, byte-identical output, checked by
 tests/test_render.py against committed goldens.
+
+There are deliberately few output formats. The palette reaches anything with a
+UI through current.json, which is written atomically and needs no shell
+parsing; the two files here exist for consumers that read a config file rather
+than a palette.
 """
 from __future__ import annotations
 
 import json
 
 from . import __version__
-from .palette import alpha_byte, argb
+from .palette import alpha_byte
 
 GENERATED = "Generated from themes/%s/theme.toml by mac-themer %s. Do not edit."
 
 # The five non-palette Ghostty options the pack carries, in Ghostty's own
-# spelling, mapped to their palette key.
+# spelling, mapped to their palette key. Hyphenated, not underscored: Ghostty
+# accepts both, but this is the spelling its documentation uses and the one the
+# previous setup wrote, and a config that warns is not a cosmetic difference.
 GHOSTTY_SCALARS = (
     ("background", "background"),
     ("foreground", "foreground"),
     ("cursor-color", "cursor"),
     ("selection-background", "selection_background"),
     ("selection-foreground", "selection_foreground"),
-)
-
-BAR_EXPORTS = (
-    ("BAR_BG_SOLID", "background_solid", 1.0),
-    ("ITEM_BG", "item_bg", 1.0),
-    ("ACCENT", "accent", 1.0),
-    ("LABEL_COLOR", "label", 1.0),
-    ("ICON_COLOR", "icon", 1.0),
-    ("MUTED", "muted", 1.0),
-    ("RED", "red", 1.0),
-    ("GREEN", "green", 1.0),
-    ("YELLOW", "yellow", 1.0),
 )
 
 
@@ -46,7 +41,12 @@ def ghostty(theme):
 
 
 def colors_toml(theme):
-    """The base16/ANSI layer on its own, for tools that only want the palette."""
+    """The base16/ANSI layer on its own.
+
+    A pack carries it so anything that only wants a terminal palette can read
+    one file instead of learning current.json, and so the pack is legible to a
+    human without the tool.
+    """
     lines = ["# " + GENERATED % (theme.slug, __version__), ""]
     for key in ("accent", "cursor", "foreground", "background",
                 "selection_foreground", "selection_background"):
@@ -57,36 +57,12 @@ def colors_toml(theme):
     return "\n".join(lines) + "\n"
 
 
-def sketchybar_sh(theme, tokens, bar):
-    alpha = float(theme.bar.get("background_alpha", 0.902))
-    lines = [
-        "#!/usr/bin/env bash",
-        "# %s - bar palette (0xAARRGGBB)" % theme.name,
-        "export BAR_COLOR=0x%08x" % argb(bar["background"], alpha),
-    ]
-    for name, key, opacity in BAR_EXPORTS:
-        lines.append("export %s=0x%08x" % (name, argb(bar[key], opacity)))
-    return "\n".join(lines) + "\n"
-
-
-def borders_sh(theme):
-    return "\n".join([
-        "#!/usr/bin/env bash",
-        "# %s - border palette (0xAARRGGBB)" % theme.name,
-        "export ACTIVE_COLOR=0x%08x" % argb(theme.border["active"]),
-        "export INACTIVE_COLOR=0x%08x" % argb(theme.border["inactive"]),
-        "",
-    ])
-
-
 def resolved(theme, tokens, bar):
-    """The machine-readable palette every app-facing consumer should read.
+    """The machine-readable palette every app-facing consumer reads.
 
-    The shell fragments exist for consumers already wired to the omarchy
-    convention. New consumers get this file instead: it carries the palette,
-    the semantic roles and the named border and bar colours in one place, so
-    an app needs no theme logic of its own and no shell parsing. maccer and
-    the Qt pill are the intended readers.
+    This is the interface. It carries the palette, the semantic roles and the
+    named border and bar colours in one place, so an app needs no theme logic
+    of its own and no shell parsing: point a file watcher at it and repaint.
     """
     return {
         "schema": 1,
@@ -116,6 +92,4 @@ def artifacts(theme, tokens, bar):
     return {
         "colors.toml": colors_toml(theme),
         "ghostty.conf": ghostty(theme),
-        "sketchybar.sh": sketchybar_sh(theme, tokens, bar),
-        "borders.sh": borders_sh(theme),
     }

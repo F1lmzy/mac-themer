@@ -6,24 +6,25 @@ macOS desktop rice.
 One pack decides every colour on the desktop. `mac-themer set <pack>` renders
 each consumer's own format from it, points the apps that are running at the new
 values, and writes one machine-readable palette that anything newer can read
-instead of parsing shell. This is the theming and border layer lifted out of
-[omacosy](https://github.com/paulsp94/omacosy) and owned here, so the rest of
-the desktop can move off that project without losing its look.
+instead of parsing shell.
+
+mac-themer is standalone. It installs, runs and uninstalls on its own: no other
+project's helper, directory or updater is read, written or reinstalled, and
+`tests/test_render.py::OwnnessTest` fails the suite if that ever stops being
+true. The theming and border layer was ported out of another rice and now lives
+here; the port's provenance is in [NOTICE.md](NOTICE.md).
 
 ## Install
 
 ```sh
-./install.sh          # builds the border ring, links the CLI, applies a pack
-./tests/run.sh        # 30 unit tests, goldens, and a CLI run in a sandbox
-./uninstall.sh        # removes the ring and the links; --purge-state for state
+./install.sh          # builds the ring + wallpaper helper, links the CLI, applies a pack
+./tests/run.sh        # 35 unit tests, goldens, and a CLI run in a sandbox
+./uninstall.sh        # removes the ring, the binaries and the links
 ```
 
 Requires macOS 26, the Xcode command line tools (`swiftc`) and python3 3.11+
 (`tomllib`). Nothing needs Full Disk Access or Accessibility: the ring needs no
 permissions at all.
-
-`install.sh` stops `com.omacosy.borders` if it is loaded, because two ring
-daemons draw two rings. `uninstall.sh` gives that agent back.
 
 ## Use
 
@@ -35,19 +36,19 @@ mac-themer bg-next              # next wallpaper in the pack
 mac-themer bg-next ~/pic.jpg    # or set one exactly
 mac-themer dump                 # every resolved colour, or --json
 mac-themer current --json       # the resolved palette as an app would read it
-mac-themer doctor               # state, conflicts, what is installed where
+mac-themer doctor               # state, other ring daemons, what is installed where
 ```
 
 `theme-set`, `theme-next` and `theme-bg-next` still exist and do the same
-things. They are kept as names because AeroSpace chords, the omacosy bar and
-the Qt pill already shell out to them, so nothing has to be rewritten to move
-over. `theme-set` with no argument lists packs, which is what it did before.
+things. They are kept as names because chords and keybindings already call them,
+so nothing has to be rewritten to move over. `theme-set` with no argument lists
+packs.
 
 ## The palette model
 
 A pack is one file. `themes/<slug>/theme.toml` carries a base16/ANSI palette
-because that is what terminals need, explicit border colours because whether
-the inactive ring should be a raised surface or the palette's dimmest tone is a
+because that is what terminals need, explicit border colours because whether the
+inactive ring should be a raised surface or the palette's dimmest tone is a
 judgement call about that palette, and overrides for any semantic role the
 derivation gets wrong:
 
@@ -86,16 +87,14 @@ bytes.
 
 ## What gets written
 
-Generated next to the pack in `themes/<slug>/` (gitignored, because the active
-pointer is a symlink to the pack directory and consumers resolve it and read
-the file next to it):
+In the pack directory (`themes/<slug>/`, gitignored, because the active-theme
+pointer is a symlink to the pack and a consumer resolving it reads these next to
+it):
 
 | File | Read by |
 |---|---|
-| `colors.toml` | anything that only wants a base16 palette |
-| `ghostty.conf` | Ghostty, which reloads on request |
-| `sketchybar.sh` | the omacosy bar's palette |
-| `borders.sh` | the ring's palette, and OmniWM-style consumers that expect it |
+| `colors.toml` | anything that only wants a base16 palette, including a human |
+| `ghostty.conf` | Ghostty, when the pack is applied |
 
 In the state directory (`~/.config/macthemer/`):
 
@@ -103,17 +102,13 @@ In the state directory (`~/.config/macthemer/`):
 |---|---|
 | `current` | symlink to the active pack |
 | `current.json` | the resolved palette: palette, tokens, border, bar, alpha |
+| `ghostty.conf` | the fragment Ghostty is told to load |
 | `borders.conf` | ring geometry (width, gap, radius, per-app radius) |
-| `disabled-agents` | what `install.sh` took over, so `uninstall.sh` can return it |
 
-And at `~/.config/omarchy/current/`: the same theme symlink and `ghostty.conf`
-the omarchy convention already expects, so a bar, helper or script on this
-machine keeps resolving its files while the desktop migrates. Nothing is asked
-to change. `MACTHEMER_COMPAT` moves or, once nothing reads it, drops it.
-
-`current.json` is the seam for everything that is not wired yet. It is written
-atomically and carries the palette, the semantic roles and the named border and
-bar colours, so an app needs no theme logic of its own and no shell parsing:
+`current.json` is the interface for everything that is not wired yet. It is
+written atomically and carries the palette, the semantic roles and the named
+border and bar colours, so an app needs no theme logic of its own and no shell
+parsing:
 
 ```json
 {
@@ -133,59 +128,78 @@ bar colours, so an app needs no theme logic of its own and no shell parsing:
 Paths in it are relative on purpose: a published artifact must not carry this
 machine's layout.
 
+There is no shell-fragment output. A palette is data, and a consumer that wants
+it can read `current.json`; generating `.sh` files to be `source`d meant
+publishing files into a directory another project owns, which is exactly the
+coupling this repo dropped.
+
 ## The border ring
 
 `borders/borders.swift` draws a ring around the focused window. It is a port of
-omacosy's daemon and keeps that revision's behaviour, including the parts that
-exist only because of something the window server actually does: SkyLight
+another project's daemon and keeps that revision's behaviour, including the parts
+that exist only because of something the window server actually does: SkyLight
 notifications instead of polling, the frontmost-pid lookup that skips AppKit's
-~1s focus lag, per-window move/resize subscriptions, and wall-clock deferral
-gates so a transient miss does not blink the ring. It needs no permissions.
+~1s focus lag, per-window move/resize subscriptions, and wall-clock deferral gates
+so a transient miss does not blink the ring. It needs no permissions.
 
-Two things differ from the ported revision:
+What the port changed:
 
-- geometry comes from `~/.config/macthemer/borders.conf` and the ring colour
-  from `current.json`, both watched with kqueue and re-read in place;
+- geometry comes from `~/.config/macthemer/borders.conf` and the ring colour from
+  `current.json`, both watched with kqueue and re-read in place. A truncated file
+  fails the parse and keeps the last colour, rather than matching a line by luck;
+- it watches `/tmp/macthemer-ws-switch`, its own sentinel, and nothing else;
 - **it covers AeroSpace only.** Under OmniWM the ring parks itself and OmniWM
   draws its own border. mac-themer does not write into OmniWM's settings.
 
-Both workspace-switch sentinel names (`/tmp/macthemer-ws-switch` and
-`/tmp/omacosy-ws-switch`) are watched, so the AeroSpace config does not have to
-care which project wrote its chord.
+`width`, `gap` and `radius` are a concentric set: the ring radius is the window's
+corner radius plus `gap` plus half `width`. Change `gap` and move the radii with
+it, or the ring fights the window's own corners. The conf file documents the
+measured radii for the apps that were measured.
 
-`width`, `gap` and `radius` are a concentric set: the ring radius is the
-window's corner radius plus `gap` plus half `width`. Change `gap` and move the
-radii with it, or the ring fights the window's own corners. The conf file
-documents the measured radii for the apps that were measured.
+## Wallpapers
+
+`helper/wallpaper.swift` is built by `install.sh` as `macthemer-wallpaper`:
+
+```sh
+macthemer-wallpaper set <path>      # every screen
+macthemer-wallpaper get             # one line per screen
+macthemer-wallpaper resync <path>   # re-assert it on screens showing something else
+```
+
+NSWorkspace is used directly because it is the only path that reliably sets a
+per-screen picture on macOS 14 and later: System Events wallpaper scripting
+intermittently returns `missing value` there and silently keeps the old image.
+`resync` exists because macOS keeps the desktop picture per display, so a screen
+unplugged during a theme change comes back showing the theme before it. Applying
+a pack falls back to System Events when the helper has not been built yet.
 
 ## Tests
 
 ```sh
 ./tests/run.sh                        # unit, golden, CLI sandbox
-MACTHEMER_TEST_BUILD=1 ./tests/run.sh # also compile borders.swift
+MACTHEMER_TEST_BUILD=1 ./tests/run.sh # also compile the two Swift binaries
 ./tests/update-goldens.sh             # rewrite goldens after a renderer change
 ```
 
-The suite never touches the real desktop: the CLI tests copy the checkout,
-point every `MACTHEMER_*` path at a temporary tree and set `MACTHEMER_DRY_RUN=1`,
-so applying a theme moves a symlink in `/tmp` instead of taking over the
-tester's wallpaper, Ghostty window and Korren config.
+The suite never touches the real desktop: the CLI tests copy the checkout, point
+every `MACTHEMER_*` path at a temporary tree and set `MACTHEMER_DRY_RUN=1`, so
+applying a theme moves a symlink in `/tmp` instead of taking over the tester's
+wallpaper, Ghostty window and Korren config.
 
-The important tests are the pins in `tests/test_render.py`: the bar and border
-palettes for all four packs, read off the machine before the move. A change to
-the derivation that would restyle a bar fails there rather than being noticed
-weeks later.
+Two suites are the point of the file. `RegressionPinTest` pins the bar and border
+colours for all four packs, read off the machine before the theming moved, so a
+change to the derivation that would restyle the desktop fails there instead of
+being noticed weeks later. `OwnnessTest` scans the code for another project's
+name and fails on any reference outside a comment, which is what keeps this repo
+from quietly growing a dependency back.
 
 ## Not in this slice
 
 - The Qt pill and `maccer` are not wired to `current.json` yet. The launcher's
   `crates/launcher-ui/src/theme.rs` is still hardcoded greyscale and the pill's
-  `Theme.qml` is still its own washi palette; both are meant to read the
-  resolved palette and keep their own identity as a named pack.
+  `Theme.qml` is still its own washi palette; both are meant to read the resolved
+  palette and keep their own identity as a named pack.
 - OmniWM's border colour is OmniWM's business here. If that changes, it becomes
   another renderer, not more logic in the CLI.
 - Wallpaper-to-palette generation is not implemented. The pill carries a
   `Dyn`/matugen path that could feed it back in as a generated pack.
-
-Upstream attribution for the ported code and the redistributed packs is in
-[NOTICE.md](NOTICE.md).

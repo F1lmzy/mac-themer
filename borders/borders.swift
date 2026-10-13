@@ -588,11 +588,10 @@ func watch(_ path: String, create: Bool, handler: @escaping () -> Void) {
     src.resume()
 }
 
-// AeroSpace announces workspace switches by touching a sentinel file
+// AeroSpace announces workspace switches by touching this sentinel
 // (exec-on-workspace-change): hide instantly and arm the stability gate —
 // the SLS move-burst alone can't distinguish a switch from a drag until the
-// ghosts are already ringed. Both spellings are watched, so it does not
-// matter which chord the Aerospace config was written for.
+// ghosts are already ringed. The AeroSpace config is what touches it.
 func noteWorkspaceSwitch() {
     lastWsSwitchAt = Date()
     focusMayHaveChanged = true // the target workspace has its own focus
@@ -600,7 +599,6 @@ func noteWorkspaceSwitch() {
     syncShroud(nil) // the next tick re-covers if the target is fullscreen too
 }
 watch("/tmp/macthemer-ws-switch", create: true) { noteWorkspaceSwitch() }
-watch("/tmp/omacosy-ws-switch", create: true) { noteWorkspaceSwitch() }
 
 // `mac-themer set` replaces current.json — watch the directory, since the
 // file behind an old symlink never changes itself

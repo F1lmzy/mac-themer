@@ -2,10 +2,11 @@
 """mac-themer's unit, golden and no-visual-regression checks.
 
 Run through tests/run.sh, which points MACTHEMER_* at a throwaway tree so a
-test run never touches the real desktop. The pinned values at the bottom are
-the point of the suite: every one of them was read off the machine before the
-move, so a change to the derivation that would restyle a bar or a ring fails
-here instead of being noticed weeks later.
+test run never touches the real desktop. Two suites here are the point of the
+file: the pinned colours at the bottom were read off the machine before the
+theming moved, so a change to the derivation that would restyle the desktop
+fails here instead of being noticed weeks later, and OwnnessTest keeps another
+project's paths out of the code entirely.
 """
 from __future__ import annotations
 
@@ -22,79 +23,52 @@ from macthemer import palette, paths, render  # noqa: E402
 from macthemer import tokens as tokens_mod  # noqa: E402
 
 SLUGS = ("catppuccin", "gruvbox", "osaka-jade", "tokyo-night")
-GENERATED = ("colors.toml", "ghostty.conf", "sketchybar.sh", "borders.sh")
+GENERATED = ("colors.toml", "ghostty.conf")
 
-# Read off the pre-move machine: omacosy's themes/<slug>/sketchybar.sh and
-# borders.sh. Byte-for-byte, minus the comment line.
+# The colours the desktop was wearing before the theming moved, read off the
+# live configuration. Hex here, where the old bar palette spoke 0xAARRGGBB.
 PINNED = {
     "catppuccin": {
-        "sketchybar.sh": {
-            "BAR_COLOR": "0xe61e1e2e", "BAR_BG_SOLID": "0xff1e1e2e",
-            "ITEM_BG": "0xff313244", "ACCENT": "0xffcba6f7",
-            "LABEL_COLOR": "0xffcdd6f4", "ICON_COLOR": "0xffcdd6f4",
-            "MUTED": "0xff6c7086", "RED": "0xfff38ba8",
-            "GREEN": "0xffa6e3a1", "YELLOW": "0xfff9e2af",
-        },
-        "borders.sh": {"ACTIVE_COLOR": "0xffcba6f7", "INACTIVE_COLOR": "0xff45475a"},
+        "alpha_byte": 230,
+        "bar": {"background": "#1e1e2e", "background_solid": "#1e1e2e",
+                "item_bg": "#313244", "accent": "#cba6f7",
+                "label": "#cdd6f4", "icon": "#cdd6f4", "muted": "#6c7086",
+                "red": "#f38ba8", "green": "#a6e3a1", "yellow": "#f9e2af"},
+        "border": {"active": "#cba6f7", "inactive": "#45475a"},
     },
     "gruvbox": {
-        "sketchybar.sh": {
-            "BAR_COLOR": "0xe6282828", "BAR_BG_SOLID": "0xff282828",
-            "ITEM_BG": "0xff3c3836", "ACCENT": "0xfffe8019",
-            "LABEL_COLOR": "0xffebdbb2", "ICON_COLOR": "0xffebdbb2",
-            "MUTED": "0xff928374", "RED": "0xfffb4934",
-            "GREEN": "0xffb8bb26", "YELLOW": "0xfffabd2f",
-        },
-        "borders.sh": {"ACTIVE_COLOR": "0xfffe8019", "INACTIVE_COLOR": "0xff504945"},
+        "alpha_byte": 230,
+        "bar": {"background": "#282828", "background_solid": "#282828",
+                "item_bg": "#3c3836", "accent": "#fe8019",
+                "label": "#ebdbb2", "icon": "#ebdbb2", "muted": "#928374",
+                "red": "#fb4934", "green": "#b8bb26", "yellow": "#fabd2f"},
+        "border": {"active": "#fe8019", "inactive": "#504945"},
     },
     "osaka-jade": {
-        "sketchybar.sh": {
-            "BAR_COLOR": "0xe6111c18", "BAR_BG_SOLID": "0xff111c18",
-            "ITEM_BG": "0xff23372b", "ACCENT": "0xff509475",
-            "LABEL_COLOR": "0xffc1c497", "ICON_COLOR": "0xffc1c497",
-            "MUTED": "0xff53685b", "RED": "0xffff5345",
-            "GREEN": "0xff63b07a", "YELLOW": "0xffe5c736",
-        },
-        "borders.sh": {"ACTIVE_COLOR": "0xff509475", "INACTIVE_COLOR": "0xff23372b"},
+        "alpha_byte": 230,
+        "bar": {"background": "#111c18", "background_solid": "#111c18",
+                "item_bg": "#23372b", "accent": "#509475",
+                "label": "#c1c497", "icon": "#c1c497", "muted": "#53685b",
+                "red": "#ff5345", "green": "#63b07a", "yellow": "#e5c736"},
+        "border": {"active": "#509475", "inactive": "#23372b"},
     },
     "tokyo-night": {
-        "sketchybar.sh": {
-            "BAR_COLOR": "0xe61a1b26", "BAR_BG_SOLID": "0xff1a1b26",
-            "ITEM_BG": "0xff292e42", "ACCENT": "0xff7aa2f7",
-            "LABEL_COLOR": "0xffc0caf5", "ICON_COLOR": "0xffc0caf5",
-            "MUTED": "0xff565f89", "RED": "0xfff7768e",
-            "GREEN": "0xff9ece6a", "YELLOW": "0xffe0af68",
-        },
-        "borders.sh": {"ACTIVE_COLOR": "0xff7aa2f7", "INACTIVE_COLOR": "0xff3b4261"},
+        "alpha_byte": 230,
+        "bar": {"background": "#1a1b26", "background_solid": "#1a1b26",
+                "item_bg": "#292e42", "accent": "#7aa2f7",
+                "label": "#c0caf5", "icon": "#c0caf5", "muted": "#565f89",
+                "red": "#f7768e", "green": "#9ece6a", "yellow": "#e0af68"},
+        "border": {"active": "#7aa2f7", "inactive": "#3b4261"},
     },
 }
 
-GOOD_PACK = {
-    "name": "Test",
-    "palette": {
-        "background": "#101010", "foreground": "#e0e0e0", "cursor": "#ffffff",
-        "accent": "#4080ff", "selection_background": "#303030",
-        "selection_foreground": "#e0e0e0",
-        **{"color%d" % i: "#%02x%02x%02x" % (i * 16, 255 - i * 16, 128) for i in range(16)},
-    },
-    "border": {"active": "#4080ff", "inactive": "#303030"},
-}
+# Assembled rather than written out, so this file does not contain the string
+# it searches for: the scan below would otherwise fail on its own needle.
+FORBIDDEN = "omacos" + "y"
 
-
-def exports(text):
-    found = {}
-    for line in text.splitlines():
-        if line.startswith("export ") and "=" in line:
-            name, value = line[len("export "):].split("=", 1)
-            found[name] = value
-    return found
-
-
-def write_pack(root, slug, body):
-    folder = Path(root) / "themes" / slug
-    folder.mkdir(parents=True, exist_ok=True)
-    (folder / "theme.toml").write_text(body)
-    return folder
+SCANNED_NAMES = ("install.sh", "uninstall.sh", "theme.schema.json", ".gitignore")
+SCANNED_DIRS = ("bin", "lib", "borders", "helper", "tests")
+SCANNED_SUFFIXES = (".py", ".sh", ".swift", ".json", ".toml")
 
 
 class PackTest(unittest.TestCase):
@@ -114,7 +88,8 @@ class PackTest(unittest.TestCase):
     def test_missing_palette_key_is_rejected(self):
         import tempfile
         with tempfile.TemporaryDirectory() as tmp:
-            write_pack(tmp, "broken", '[palette]\nbackground = "#000000"\n[border]\nactive = "#000000"\ninactive = "#000000"\n')
+            write_pack(tmp, "broken", '[palette]\nbackground = "#000000"\n'
+                                     '[border]\nactive = "#000000"\ninactive = "#000000"\n')
             with self.assertRaises(palette.ThemeError):
                 palette.load(tmp, "broken")
 
@@ -147,6 +122,13 @@ class PackTest(unittest.TestCase):
             palette.load(ROOT, "does-not-exist")
 
 
+def write_pack(root, slug, body):
+    folder = Path(root) / "themes" / slug
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "theme.toml").write_text(body)
+    return folder
+
+
 class ColourTest(unittest.TestCase):
     def test_mix_endpoints(self):
         self.assertEqual(palette.mix("#000000", "#ffffff", 0.0), "#000000")
@@ -154,8 +136,8 @@ class ColourTest(unittest.TestCase):
 
     def test_mix_is_srgb_not_linear(self):
         # A quarter of the way from black to white is 64 in sRGB. Mixing in
-        # linear light would give 137, which is why the choice is asserted:
-        # the elevation ramp has to stay in the space the palette was picked in.
+        # linear light would give 137, which is why the choice is asserted: the
+        # elevation ramp has to stay in the space the palette was picked in.
         self.assertEqual(palette.mix("#000000", "#ffffff", 0.25), "#404040")
 
     def test_alpha_byte(self):
@@ -179,15 +161,15 @@ class TokenTest(unittest.TestCase):
         self.assertEqual(list(self.tokens), list(tokens_mod.TOKEN_ORDER))
 
     def test_semantic_roles_come_from_the_ansi_ramp(self):
-        palette_keys = self.theme.palette
-        self.assertEqual(self.tokens["surface"], palette_keys["background"])
-        self.assertEqual(self.tokens["on_surface"], palette_keys["foreground"])
-        self.assertEqual(self.tokens["primary"], palette_keys["accent"])
-        self.assertEqual(self.tokens["error"], palette_keys["color1"])
-        self.assertEqual(self.tokens["success"], palette_keys["color2"])
-        self.assertEqual(self.tokens["warning"], palette_keys["color3"])
-        self.assertEqual(self.tokens["info"], palette_keys["color4"])
-        self.assertEqual(self.tokens["secondary"], palette_keys["color6"])
+        keys = self.theme.palette
+        self.assertEqual(self.tokens["surface"], keys["background"])
+        self.assertEqual(self.tokens["on_surface"], keys["foreground"])
+        self.assertEqual(self.tokens["primary"], keys["accent"])
+        self.assertEqual(self.tokens["error"], keys["color1"])
+        self.assertEqual(self.tokens["success"], keys["color2"])
+        self.assertEqual(self.tokens["warning"], keys["color3"])
+        self.assertEqual(self.tokens["info"], keys["color4"])
+        self.assertEqual(self.tokens["secondary"], keys["color6"])
 
     def test_pack_overrides_win(self):
         self.assertEqual(self.tokens["surface_container"], "#313244")
@@ -280,8 +262,8 @@ class GoldenTest(unittest.TestCase):
         self.assertNotIn(str(self.repo), json.dumps(resolved))
 
     def test_ghostty_uses_hyphenated_names(self):
-        # Ghostty's own spelling. The pre-move file used these, and warning
-        # about unknown keys on every launch is not a cosmetic difference.
+        # Ghostty's own spelling. The pre-move file used these, and warning about
+        # unknown keys on every launch is not a cosmetic difference.
         text = self.rendered("catppuccin")["ghostty.conf"]
         self.assertIn("cursor-color = #", text)
         self.assertIn("selection-background = #", text)
@@ -289,19 +271,80 @@ class GoldenTest(unittest.TestCase):
 
 
 class RegressionPinTest(unittest.TestCase):
-    """The colours that were on the machine before the move."""
+    """The colours that were on the machine before the theming moved."""
 
-    def rendered(self, slug):
+    def resolved(self, slug):
         theme = palette.load(ROOT, slug)
         tokens = tokens_mod.tokens_for(theme)
-        return render.artifacts(theme, tokens, tokens_mod.bar_for(theme, tokens))
+        return render.resolved(theme, tokens, tokens_mod.bar_for(theme, tokens))
 
     def test_no_colour_moved(self):
-        for slug, files in PINNED.items():
-            rendered = self.rendered(slug)
-            for name, expected in files.items():
-                self.assertEqual(exports(rendered[name]), expected,
-                                 "%s/%s no longer matches the pre-move palette" % (slug, name))
+        for slug, expected in PINNED.items():
+            resolved = self.resolved(slug)
+            self.assertEqual(resolved["alpha_byte"], expected["alpha_byte"], slug)
+            for key, value in expected["bar"].items():
+                self.assertEqual(resolved["bar"][key], value, "%s bar.%s" % (slug, key))
+            for key, value in expected["border"].items():
+                self.assertEqual(resolved["border"][key], value, "%s border.%s" % (slug, key))
+
+    def test_every_bar_and_border_key_is_pinned(self):
+        # A key added to the bar vocabulary without a pin would be a colour
+        # nobody checked. This makes the omission fail instead.
+        for slug, expected in PINNED.items():
+            resolved = self.resolved(slug)
+            self.assertEqual(sorted(resolved["bar"]), sorted(expected["bar"]), slug)
+            self.assertEqual(sorted(resolved["border"]), ["active", "inactive"], slug)
+
+
+class OwnnessTest(unittest.TestCase):
+    """mac-themer must not read, write, run or reinstall another project's
+    files. Comments are exempt on purpose: the border daemon is a port, and MIT
+    requires the attribution to survive, so the only mentions left in code are
+    the provenance lines in NOTICE.md and the port's own header."""
+
+    def scanned(self):
+        for name in SCANNED_NAMES:
+            path = ROOT / name
+            if path.is_file():
+                yield path
+        for folder in SCANNED_DIRS:
+            for path in sorted((ROOT / folder).rglob("*")):
+                if path.is_file() and path.suffix in SCANNED_SUFFIXES:
+                    yield path
+        for path in sorted((ROOT / "themes").glob("*/theme.toml")):
+            yield path
+
+    def test_nothing_references_another_project(self):
+        offenders = []
+        for path in self.scanned():
+            prefixes = ("//", "/*", "*") if path.suffix == ".swift" else ("#",)
+            for number, line in enumerate(path.read_text().splitlines(), start=1):
+                if line.strip().startswith(prefixes):
+                    continue
+                if FORBIDDEN in line.lower():
+                    offenders.append("%s:%d: %s" % (path.relative_to(ROOT), number, line.strip()))
+        self.assertEqual(offenders, [],
+                         "the themer still points at another project:\n" + "\n".join(offenders))
+
+    def test_notice_keeps_the_attribution(self):
+        notice = (ROOT / "NOTICE.md").read_text().lower()
+        self.assertIn(FORBIDDEN, notice)
+        self.assertIn("mit", notice)
+
+    def test_no_hidden_install_hooks(self):
+        # Nothing may shell out to a package manager or another updater.
+        # Assembled so this check does not match its own list of needles.
+        banned = ("bre" + "w ", "git " + "pull", "git " + "-C",
+                  "cur" + "l ", "wge" + "t ")
+        for path in self.scanned():
+            if path.suffix not in (".sh", ".py"):
+                continue
+            for number, line in enumerate(path.read_text().splitlines(), start=1):
+                if line.strip().startswith("#"):
+                    continue
+                for needle in banned:
+                    if needle in line and "noqa" not in line:
+                        self.fail("%s:%d runs %r" % (path.relative_to(ROOT), number, needle))
 
 
 class WriteTest(unittest.TestCase):
@@ -339,12 +382,27 @@ class WriteTest(unittest.TestCase):
             folder.mkdir(parents=True)
             for name in ("2-b.png", "0-a.webp", "1-c.jpg", "notes.txt"):
                 (folder / name).write_text("x")
-            (Path(tmp) / "themes" / "t" / "theme.toml").write_text("")
             theme = palette.Theme(slug="t", name="T", variant="dark", palette={},
                                   border={}, token_overrides={}, bar={},
                                   source=Path(tmp) / "themes" / "t" / "theme.toml")
             names = [path.name for path in apply_mod.backgrounds(theme)]
             self.assertEqual(names, ["0-a.webp", "1-c.jpg", "2-b.png"])
+
+    def test_wallpaper_helper_prefers_our_own_binary(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            binary = Path(tmp) / apply_mod.WALLPAPER_HELPER
+            binary.write_text("#!/bin/sh\n")
+            binary.chmod(0o755)
+            previous = __import__("os").environ.get("MACTHEMER_BIN")
+            __import__("os").environ["MACTHEMER_BIN"] = tmp
+            try:
+                self.assertEqual(apply_mod.wallpaper_helper(), binary)
+            finally:
+                if previous is None:
+                    del __import__("os").environ["MACTHEMER_BIN"]
+                else:
+                    __import__("os").environ["MACTHEMER_BIN"] = previous
 
 
 if __name__ == "__main__":
