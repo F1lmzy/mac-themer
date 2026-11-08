@@ -16,6 +16,7 @@ from pathlib import Path
 
 from . import paths, render
 from . import tokens as tokens_mod
+from .palette import ThemeError
 
 # Korren keeps hand-tuned built-ins under these names and live-derives from the
 # palette for anything else. It watches its config, so this repaints.
@@ -40,6 +41,10 @@ GHOSTTY_RELOAD = """tell application "Ghostty"
 end tell"""
 
 IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png", ".webp", ".heic", ".tiff")
+
+# A wallpaper identity crosses a process boundary and comes back as an
+# argument, so it is bounded and must not be able to name another directory.
+MAX_WALLPAPER_ID = 128
 
 
 def dry_run():
@@ -81,11 +86,47 @@ def relink(path, target):
 
 
 def backgrounds(theme):
+    """The pack's background images, sorted by filename.
+
+    Hidden entries are skipped: `.DS_Store` is not a wallpaper, and a dot-name
+    is not something the catalog should publish.
+    """
     folder = theme.source.parent / "backgrounds"
     if not folder.is_dir():
         return []
     return sorted(path for path in folder.iterdir()
-                  if path.suffix.lower() in IMAGE_SUFFIXES)
+                  if not path.name.startswith(".")
+                  and path.suffix.lower() in IMAGE_SUFFIXES)
+
+
+def wallpaper_ids(theme):
+    """The pack's wallpapers as path-free identities, in apply order.
+
+    A wallpaper's identity is its filename: `catalog` publishes it and `apply
+    --background` takes it back. A name that could address another directory is
+    refused rather than rewritten, because the catalog entry is part of what
+    authorizes the later write.
+    """
+    ids = []
+    for path in backgrounds(theme):
+        name = path.name
+        if (len(name.encode("utf-8")) > MAX_WALLPAPER_ID
+                or name in (".", "..")
+                or "/" in name or "\\" in name or "\x00" in name
+                or any(character < " " or character == "\x7f" for character in name)):
+            raise ThemeError(
+                "themes/%s/backgrounds: %r cannot be published as a wallpaper"
+                % (theme.slug, name))
+        ids.append(name)
+    return ids
+
+
+def wallpaper_path(theme, ident):
+    """Resolve a published wallpaper identity back to its file, or None."""
+    for path in backgrounds(theme):
+        if path.name == ident:
+            return path
+    return None
 
 
 def wallpaper_helper():
@@ -96,6 +137,7 @@ def wallpaper_helper():
 
 
 def set_wallpaper(path):
+    """Set the desktop picture and report how, or None if every route failed."""
     if dry_run():
         return "wallpaper (dry run)"
     helper = wallpaper_helper()
@@ -104,8 +146,10 @@ def set_wallpaper(path):
                                 capture_output=True, text=True)
         if result.returncode == 0:
             return "wallpaper via %s" % WALLPAPER_HELPER
-    subprocess.run(["osascript", "-", str(path)], input=WALLPAPER_SCRIPT,
-                   capture_output=True, text=True)
+    result = subprocess.run(["osascript", "-", str(path)], input=WALLPAPER_SCRIPT,
+                            capture_output=True, text=True)
+    if result.returncode != 0:
+        return None
     return "wallpaper via osascript"
 
 
@@ -185,8 +229,12 @@ def render_pack(theme):
     return tokens, bar, written
 
 
-def apply(theme, wallpaper=True, korren_flag=True, reload=True, index=0):
-    """Apply a pack and report every side effect, in the order it happened."""
+def apply(theme, wallpaper=True, korren_flag=True, reload=True, index=0, background=None):
+    """Apply a pack and report every side effect, in the order it happened.
+
+    `background` names one of the pack's own images and wins over `index`; a
+    file that is not part of the pack is refused instead of set.
+    """
     actions = []
     tokens, bar, written = render_pack(theme)
     if written:
@@ -202,10 +250,13 @@ def apply(theme, wallpaper=True, korren_flag=True, reload=True, index=0):
         actions.append("current -> %s" % theme.slug)
 
     pictures = backgrounds(theme)
+    if background is not None and background not in pictures:
+        raise RuntimeError("%s is not a background of %s" % (background.name, theme.slug))
     if wallpaper and pictures:
-        chosen = pictures[min(index, len(pictures) - 1)]
+        chosen = background if background is not None else pictures[min(index, len(pictures) - 1)]
         remember_background(chosen)
-        actions.append(set_wallpaper(chosen) + " (%s)" % chosen.name)
+        outcome = set_wallpaper(chosen)
+        actions.append((outcome or "wallpaper failed") + " (%s)" % chosen.name)
     if korren_flag:
         result = korren(theme.slug)
         if result:

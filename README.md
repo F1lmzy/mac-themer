@@ -18,7 +18,7 @@ here; the port's provenance is in [NOTICE.md](NOTICE.md).
 
 ```sh
 ./install.sh          # builds the ring + wallpaper helper, links the CLI, applies a pack
-./tests/run.sh        # 35 unit tests, goldens, and a CLI run in a sandbox
+./tests/run.sh        # unit, golden and CLI tests, all in a sandbox
 ./uninstall.sh        # removes the ring, the binaries and the links
 ```
 
@@ -34,7 +34,13 @@ mac-themer set gruvbox          # apply
 mac-themer next                 # cycle
 mac-themer bg-next              # next wallpaper in the pack
 mac-themer bg-next ~/pic.jpg    # or set one exactly
+mac-themer wallpaper gruvbox --id 1-the-backwater.jpg --json   # one pack wallpaper, no theme change
 mac-themer dump                 # every resolved colour, or --json
+mac-themer catalog --json       # every pack's resolved palette, for a picker
+mac-themer apply gruvbox \
+  --expected-palette "$ENTRY" --json   # apply one pack after a full palette check
+mac-themer apply gruvbox \
+  --expected-palette "$ENTRY" --background 1-the-backwater.jpg --json   # and its wallpaper
 mac-themer current --json       # the resolved palette as an app would read it
 mac-themer doctor               # state, other ring daemons, what is installed where
 ```
@@ -43,6 +49,102 @@ mac-themer doctor               # state, other ring daemons, what is installed w
 things. They are kept as names because chords and keybindings already call them,
 so nothing has to be rewritten to move over. `theme-set` with no argument lists
 packs.
+
+`mac-themer catalog --json` is the read-only counterpart for a consumer that
+builds a picker: it returns `{schema, themes, wallpapers}` with every pack's
+resolved palette, without consulting the active theme and without machine
+paths. Each entry carries the same resolved colours `current --json` does,
+minus the three keys (`generated_by`, `pack`, `backgrounds`) that describe
+where a pack lives. The separate `wallpapers` map names each pack's images by
+filename (`{"gruvbox": ["1-the-backwater.jpg", ...]}`), sorted in the order
+`set` and `bg-next` cycle them; a filename is an identity, never a path.
+`MACTHEMER_THEMES` points it at another collection of packs; a broken pack
+fails the whole call instead of returning a partial list.
+
+`mac-themer apply <slug> --expected-palette JSON --json` is the write side of
+that same contract. `JSON` is one `themes[]` entry from `catalog --json`. The
+command reloads the catalog, selects the exact ASCII slug, and compares the
+pack's full resolved palette, `tokens`, `border` and `bar` included, with the
+document it was handed. A different colour, an added or missing field, or a
+non-integer `alpha_byte` is refused before any file is written. On success it
+applies that pack with `wallpaper=false` and prints
+`{schema, status: "applied", theme, wallpaper, warnings}`; a Ghostty reload that
+failed becomes the `ghosttyReloadFailed` warning instead of a silent success.
+The expected palette, not the slug, is the authorization: a caller can never
+name a path.
+
+`--background ID` additionally sets one of that pack's own images, named exactly
+as `catalog --json` published it. The response then carries the wallpaper it
+set, or `null` plus a `wallpaperFailed` warning when neither the helper nor the
+AppleScript fallback could change it — the palette apply still stands. Without
+the flag the wallpaper is never touched, which is why `wallpaper` is `null` and
+an older consumer keeps its exact previous behaviour. `set`/`next` are
+unchanged and still take only a slug.
+
+A separate shared launcher service drives this command for a confirmed Apply;
+the producer side stays a plain CLI that any caller can use.
+
+`mac-themer wallpaper SLUG --id ID --json` sets one of that pack's wallpapers on
+its own: it validates the identity against the pack, moves the remembered
+background and prints `{schema, status, theme, wallpaper, warnings}`. It writes
+no theme file, rewrites no app setting and does not touch the active theme, so
+it is the command a wallpaper picker uses. `status` is `failed` with a
+`wallpaperFailed` warning when neither the helper nor the AppleScript fallback
+could change the picture.
+
+## Importing a theme
+
+A theme published for Omarchy is one `colors.toml` of named colours, an
+optional `backgrounds/` folder and per-application files that desktop generates
+for itself. mac-themer imports the first two and nothing else:
+
+```sh
+mac-themer theme-install https://github.com/owner/omarchy-aura-theme
+mac-themer theme-install https://github.com/owner/themes-repo --all   # a collection
+mac-themer theme-install https://github.com/owner/omarchy-aura-theme --json
+mac-themer theme-uninstall aura
+```
+
+The repository is cloned shallowly into a hidden staging directory inside the
+themes collection, `colors.toml` is translated into a pack's `theme.toml`, the
+images in `backgrounds/` are copied, and the result is validated by the same
+rules `catalog` applies before it becomes visible in one rename. Nothing else
+from the repository is copied: no `hyprland.conf`, no `waybar.css`, no
+`alacritty.toml`, nothing executable, and no script is ever run.
+
+What the pack keeps:
+
+- every colour the theme states, in the source's own precedence: a canonical
+  name over its legacy alias (`foreground` over `fg`) and over the numbered
+  ANSI entry it stands for (`color7`), and a stated numbered entry over both,
+  because a theme that writes a terminal ramp had its terminal already showing
+  it. A colour the theme leaves out is derived the way that format derives it,
+  and a palette missing a colour a pack needs is refused rather than invented;
+- the variant, from `mode`, then the legacy `theme_type`, then a `light.mode`
+  marker, then the background's luminance;
+- a border ring on the theme's own focus colour and its raised surface, and the
+  three semantic roles it states (`surface_container`, `on_surface_variant`,
+  `muted`). Every other role is still derived by `lib/macthemer/tokens.py`.
+
+Which URLs are allowed is decided before git runs: `https://github.com/<owner>/<repo>`,
+one repository, no other host, scheme, port, credentials, query, fragment or
+path depth. The clone additionally refuses every transport but https and will
+not follow a redirect, so a rewritten URL cannot turn a clone into something
+else. `--slug` names the pack instead of deriving it from the repo name;
+`--force` is needed to replace a pack this command did not install, so an
+import never silently eats a hand-tuned palette. `theme-uninstall` refuses the
+active pack and anything that is not a pack inside the collection. An imported
+pack is a pack like the bundled four: `mac-themer set <slug>` applies it, and
+`catalog --json` lists it.
+
+The five limits are what keep one repository from becoming a catalog entry that
+consumers refuse: 64 wallpapers, 16 MiB per image, 64 MiB of images, a
+128-byte wallpaper filename, and one theme's worth of `colors.toml`. A
+repository holding several themes installs only with `--all`, so a collection
+never quietly becomes one pack. An imported pack is an ordinary untracked
+directory under the collection `catalog` reads (`.gitignore` covers the two
+files mac-themer renders next to `theme.toml`), marked with a `.source.json`
+that records the repository it came from.
 
 ## The palette model
 
@@ -203,3 +305,5 @@ from quietly growing a dependency back.
   another renderer, not more logic in the CLI.
 - Wallpaper-to-palette generation is not implemented. The pill carries a
   `Dyn`/matugen path that could feed it back in as a generated pack.
+- Imports read colours and pictures only. A theme's own per-application files
+  are not translated, and nothing outside `colors.toml` can change a pack.

@@ -70,6 +70,16 @@ SCANNED_NAMES = ("install.sh", "uninstall.sh", "theme.schema.json", ".gitignore"
 SCANNED_DIRS = ("bin", "lib", "borders", "helper", "tests")
 SCANNED_SUFFIXES = (".py", ".sh", ".swift", ".json", ".toml")
 
+# The one exception, and its whole purpose: a theme published in another
+# desktop's colour format can be imported from a Git repository. That means
+# naming the format in the importer and its tests, and nowhere else. It stays a
+# format import: no path into that desktop's installation, no run of its
+# scripts, no dependency on it being installed at all.
+FORMAT_IMPORTERS = ("lib/macthemer/omarchy.py", "tests/test_install.py")
+# Assembled so this file does not spell the needles it refuses to find.
+FOREIGN_INSTALLATION = (".config/" + FORBIDDEN, FORBIDDEN + "-theme-install",
+                        FORBIDDEN + "-theme-set", FORBIDDEN + "ctl")
+
 
 class PackTest(unittest.TestCase):
     def test_every_pack_loads(self):
@@ -312,11 +322,17 @@ class OwnnessTest(unittest.TestCase):
                 if path.is_file() and path.suffix in SCANNED_SUFFIXES:
                     yield path
         for path in sorted((ROOT / "themes").glob("*/theme.toml")):
+            # An imported pack is third-party content: its palette is somebody
+            # else's, and this test is about the four packs this repo writes.
+            if (path.parent / ".source.json").is_file():
+                continue
             yield path
 
     def test_nothing_references_another_project(self):
         offenders = []
         for path in self.scanned():
+            if str(path.relative_to(ROOT)) in FORMAT_IMPORTERS:
+                continue
             prefixes = ("//", "/*", "*") if path.suffix == ".swift" else ("#",)
             for number, line in enumerate(path.read_text().splitlines(), start=1):
                 if line.strip().startswith(prefixes):
@@ -325,6 +341,18 @@ class OwnnessTest(unittest.TestCase):
                     offenders.append("%s:%d: %s" % (path.relative_to(ROOT), number, line.strip()))
         self.assertEqual(offenders, [],
                          "the themer still points at another project:\n" + "\n".join(offenders))
+
+    def test_the_format_importer_reads_a_checkout_and_nothing_else(self):
+        """The exception is a published format, not a dependency."""
+        for name in FORMAT_IMPORTERS:
+            path = ROOT / name
+            if not path.is_file():
+                continue
+            text = path.read_text()
+            for needle in FOREIGN_INSTALLATION:
+                self.assertNotIn(needle, text, "%s reads another installation" % name)
+            for banned in ("subprocess.run([ \"", "os.system", "shell=True"):
+                self.assertNotIn(banned, text, "%s runs a shell" % name)
 
     def test_notice_keeps_the_attribution(self):
         notice = (ROOT / "NOTICE.md").read_text().lower()

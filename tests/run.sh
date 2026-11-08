@@ -115,9 +115,73 @@ ok "render is idempotent"
   || fail "list --json is wrong"
 "$cli" dump --json | python3 -c 'import json,sys; assert json.load(sys.stdin)["slug"]' \
   || fail "dump --json is wrong"
+"$cli" catalog --json | python3 -c '
+import json, sys
+catalog = json.load(sys.stdin)
+assert catalog["schema"] == 1
+assert [entry["slug"] for entry in catalog["themes"]] == ["catppuccin", "gruvbox", "osaka-jade", "tokyo-night"]
+assert catalog["themes"][0]["palette"]["accent"] == "#cba6f7"
+assert "pack" not in catalog["themes"][0] and "generated_by" not in catalog["themes"][0]
+assert catalog["wallpapers"]["catppuccin"] == ["0-one.png", "1-two.png"], catalog["wallpapers"]
+assert all("/" not in ident for ids in catalog["wallpapers"].values() for ident in ids)
+' || fail "catalog --json is wrong"
 "$cli" doctor >/dev/null || fail "doctor failed"
-ok "list, dump and doctor run"
+ok "list, dump, catalog and doctor run"
 
+# The guarded apply is the write side of the catalog contract. A matching
+# palette applies exactly that pack; a stale one writes nothing. Without
+# --background the wallpaper is never part of an apply, so the remembered
+# background must not move. With it, the pack's own image is set and named.
+python3 - "$TMP" "$cli" <<'PY' || fail "guarded apply is wrong"
+import json, os, subprocess, sys
+tmp, cli = sys.argv[1], sys.argv[2]
+
+def run(*args):
+    return subprocess.run([cli, *args], capture_output=True, text=True)
+
+catalog = json.loads(run("catalog", "--json").stdout)
+entry = next(item for item in catalog["themes"] if item["slug"] == "gruvbox")
+wallpapers = catalog["wallpapers"]["gruvbox"]
+assert wallpapers == ["0-one.png", "1-two.png"], wallpapers
+background = os.path.join(tmp, "run", "background")
+before = os.readlink(background) if os.path.islink(background) else None
+
+applied = run("apply", "gruvbox", "--expected-palette", json.dumps(entry), "--json")
+assert applied.returncode == 0, applied.stderr
+assert json.loads(applied.stdout) == {"schema": 1, "status": "applied",
+                                      "theme": "gruvbox", "wallpaper": None,
+                                      "warnings": []}
+assert json.load(open(os.path.join(tmp, "state", "current.json")))["slug"] == "gruvbox"
+after = os.readlink(background) if os.path.islink(background) else None
+assert after == before, "apply changed the wallpaper: %r -> %r" % (before, after)
+
+with_wallpaper = run("apply", "gruvbox", "--expected-palette", json.dumps(entry),
+                     "--background", wallpapers[1], "--json")
+assert with_wallpaper.returncode == 0, with_wallpaper.stderr
+report = json.loads(with_wallpaper.stdout)
+assert report["wallpaper"] == wallpapers[1], report
+assert report["warnings"] == [], report
+assert os.readlink(background).endswith("backgrounds/" + wallpapers[1]), \
+    os.readlink(background)
+
+for bad in ("missing.png", "../0-one.png", ""):
+    refused = run("apply", "gruvbox", "--expected-palette", json.dumps(entry),
+                  "--background", bad, "--json")
+    assert refused.returncode != 0, "accepted a bad background: %r" % bad
+
+# A wallpaper can also be set on its own: same identity, no theme change.
+by_identity = run("wallpaper", "gruvbox", "--id", wallpapers[0], "--json")
+assert by_identity.returncode == 0, by_identity.stderr
+assert json.loads(by_identity.stdout) == {"schema": 1, "status": "set", "theme": "gruvbox",
+                                          "wallpaper": wallpapers[0], "warnings": []}
+assert os.readlink(background).endswith("backgrounds/" + wallpapers[0]), os.readlink(background)
+assert run("wallpaper", "gruvbox", "--id", "missing.png", "--json").returncode != 0
+
+entry["palette"]["background"] = "#000000"
+stale = run("apply", "gruvbox", "--expected-palette", json.dumps(entry), "--json")
+assert stale.returncode != 0, "a stale palette was applied"
+PY
+ok "guarded apply checks the palette, leaves the wallpaper alone by default and can set one"
 if [ "${MACTHEMER_TEST_BUILD:-0}" = 1 ]; then
   step "borders.swift compiles"
   swiftc -O -F /System/Library/PrivateFrameworks -framework SkyLight \

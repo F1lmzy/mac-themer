@@ -23,6 +23,12 @@ def repo_root():
     return Path(__file__).resolve().parents[2]
 
 
+def themes_dir():
+    """Where theme packs live; overridable so a consumer can point the
+    catalog at another collection without moving the checkout."""
+    return _env_path("MACTHEMER_THEMES", repo_root() / "themes")
+
+
 def home():
     return Path(os.environ.get("MACTHEMER_HOME") or Path.home())
 

@@ -8,3 +8,8 @@ __pycache__/
 *.pyc
 .DS_Store
 /tmp/
+
+# A fetched theme is staged under a hidden name inside the collection and only
+# becomes a pack in one rename, so a failed import cannot disturb the catalog.
+themes/.install-*/
+themes/.removed-*/

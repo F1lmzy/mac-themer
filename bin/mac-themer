@@ -17,7 +17,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 
 from macthemer import __version__, apply as apply_mod, palette, paths, render  # noqa: E402
+from macthemer import install as install_mod  # noqa: E402
 from macthemer import tokens as tokens_mod  # noqa: E402
+
+# The consumer sends the resolved catalog entry back as the only authorization
+# for a write. Bound it so a forged or runaway argument cannot be parsed here.
+MAX_EXPECTED_BYTES = 65536
 
 
 def die(message):
@@ -26,9 +31,9 @@ def die(message):
 
 
 def slugs():
-    found = palette.available(paths.repo_root())
+    found = palette.packs(paths.themes_dir())
     if not found:
-        die("no theme packs in %s" % (paths.repo_root() / "themes"))
+        die("no theme packs in %s" % paths.themes_dir())
     return found
 
 
@@ -44,10 +49,10 @@ def load(slug=None):
     wanted = slug or current_slug() or found[0]
     if wanted not in found:
         for candidate in found:
-            if palette.load(paths.repo_root(), candidate).name.lower() == wanted.lower():
-                return palette.load(paths.repo_root(), candidate)
+            if palette.load_pack(paths.themes_dir(), candidate).name.lower() == wanted.lower():
+                return palette.load_pack(paths.themes_dir(), candidate)
         die("unknown theme %r; available: %s" % (wanted, ", ".join(found)))
-    return palette.load(paths.repo_root(), wanted)
+    return palette.load_pack(paths.themes_dir(), wanted)
 
 
 def resolved_for(theme):
@@ -58,12 +63,13 @@ def resolved_for(theme):
 def cmd_list(args):
     found = slugs()
     if args.json:
-        print(json.dumps([{"slug": slug, "name": palette.load(paths.repo_root(), slug).name}
+        print(json.dumps([{"slug": slug,
+                           "name": palette.load_pack(paths.themes_dir(), slug).name}
                           for slug in found], indent=2))
         return 0
     active = current_slug()
     for slug in found:
-        name = palette.load(paths.repo_root(), slug).name
+        name = palette.load_pack(paths.themes_dir(), slug).name
         print("%s %s  %s" % ("*" if slug == active else " ", slug, name))
     return 0
 
@@ -75,6 +81,107 @@ def cmd_current(args):
         print(paths.resolved_file().read_text(), end="")
         return 0
     print(current_slug() or "none")
+    return 0
+
+
+def cmd_catalog(args):
+    """Every pack's resolved palette and wallpaper identities, read-only and
+    path-free.
+
+    Unlike the other commands this does not consult the active theme and does
+    not require any pack to exist: an empty catalog is valid output.
+    """
+    try:
+        themes = palette.catalog(paths.themes_dir())
+    except palette.ThemeError as exc:
+        die(str(exc))
+    entries = []
+    wallpapers = {}
+    for theme in themes:
+        tokens = tokens_mod.tokens_for(theme)
+        entries.append(render.palette_entry(theme, tokens, tokens_mod.bar_for(theme, tokens)))
+        try:
+            wallpapers[theme.slug] = apply_mod.wallpaper_ids(theme)
+        except palette.ThemeError as exc:
+            die(str(exc))
+    if args.json:
+        print(json.dumps({"schema": 1, "themes": entries, "wallpapers": wallpapers},
+                         indent=2))
+        return 0
+    for entry in entries:
+        found = len(wallpapers[entry["slug"]])
+        note = "" if not found else "  %d wallpaper%s" % (found, "" if found == 1 else "s")
+        print("%s  %s (%s)%s" % (entry["slug"], entry["name"], entry["variant"], note))
+    return 0
+
+
+def cmd_apply(args):
+    """Apply one exact catalog pack, but only after a full palette check.
+
+    `catalog` is the read side of the shared browse. This is the write side:
+    it reloads the same strict catalog, selects one exact ASCII slug and
+    refuses to touch anything until the resolved, path-free palette still
+    equals the copy the consumer sent. The expected palette, not the slug, is
+    the authorization; a caller can never name a path directly.
+
+    `--background ID` additionally sets one of the pack's own wallpapers, using
+    the identity `catalog` published for it. Without the flag the wallpaper is
+    left alone, so an older consumer keeps its exact previous behaviour.
+    """
+    if not palette.SLUG.match(args.slug or ""):
+        die("invalid theme slug %r" % args.slug)
+    raw = args.expected_palette
+    if raw is None or len(raw.encode("utf-8")) > MAX_EXPECTED_BYTES:
+        die("--expected-palette must be at most %d bytes" % MAX_EXPECTED_BYTES)
+    try:
+        expected = json.loads(raw)
+    except (ValueError, TypeError) as exc:
+        die("expected palette is not valid JSON: %s" % exc)
+    if not isinstance(expected, dict):
+        die("expected palette must be a JSON object")
+    try:
+        themes = palette.catalog(paths.themes_dir())
+    except palette.ThemeError as exc:
+        die(str(exc))
+    theme = next((entry for entry in themes if entry.slug == args.slug), None)
+    if theme is None:
+        die("unknown theme %r" % args.slug)
+    tokens = tokens_mod.tokens_for(theme)
+    current = render.palette_entry(theme, tokens, tokens_mod.bar_for(theme, tokens))
+    # Exact serialized comparison on purpose: it rejects extra, missing and
+    # non-integral fields, not just a different colour. Anything less would let
+    # a forged document through the same door as the real one.
+    if json.dumps(current, sort_keys=True) != json.dumps(expected, sort_keys=True):
+        die("catalog changed: expected palette no longer matches %r" % args.slug)
+    background = None
+    if args.background is not None:
+        background = apply_mod.wallpaper_path(theme, args.background)
+        if background is None:
+            die("theme %r has no background %r" % (theme.slug, args.background))
+    try:
+        actions = apply_mod.apply(theme, wallpaper=background is not None, background=background)
+    except Exception as exc:  # noqa: BLE001 - reported honestly, not swallowed
+        die("apply failed after possible partial changes: %s" % exc)
+    warnings = []
+    if any("reload failed" in action for action in actions):
+        warnings.append("ghosttyReloadFailed")
+    # A background that could not be set is reported, never assumed: the helper
+    # may fall back to AppleScript, and that can fail on its own.
+    wallpaper = None
+    if background is not None:
+        if any("wallpaper failed" in action for action in actions):
+            warnings.append("wallpaperFailed")
+        else:
+            wallpaper = background.name
+    if args.json:
+        print(json.dumps({"schema": 1, "status": "applied", "theme": theme.slug,
+                          "wallpaper": wallpaper, "warnings": warnings}, indent=2))
+        return 0
+    print("theme: %s (%s)" % (theme.name, theme.slug))
+    if wallpaper is not None:
+        print("background: %s" % wallpaper)
+    for warning in warnings:
+        print("  warning: %s" % warning)
     return 0
 
 
@@ -140,8 +247,45 @@ def cmd_bg_next(args):
                     target = pictures[(index + 1) % len(pictures)]
                     break
     apply_mod.remember_background(target)
-    print("background: %s (%s)" % (target.name, apply_mod.set_wallpaper(target)))
+    outcome = apply_mod.set_wallpaper(target)
+    if outcome is None:
+        die("could not set the wallpaper to %s" % target.name)
+    print("background: %s (%s)" % (target.name, outcome))
     return 0
+
+
+def cmd_wallpaper(args):
+    """Set one published wallpaper of a pack, leaving the theme alone.
+
+    The identity is the one `catalog --json` published for that pack, so a
+    caller still cannot name a path. No theme file, app setting or Ghostty
+    fragment is rewritten: only the desktop picture and the remembered
+    background move.
+    """
+    try:
+        themes = palette.catalog(paths.themes_dir())
+    except palette.ThemeError as exc:
+        die(str(exc))
+    theme = next((entry for entry in themes if entry.slug == args.slug), None)
+    if theme is None:
+        die("unknown theme %r" % args.slug)
+    try:
+        pictures = apply_mod.wallpaper_ids(theme)
+    except palette.ThemeError as exc:
+        die(str(exc))
+    if args.wallpaper_id not in pictures:
+        die("theme %r has no wallpaper %r" % (theme.slug, args.wallpaper_id))
+    target = apply_mod.wallpaper_path(theme, args.wallpaper_id)
+    apply_mod.remember_background(target)
+    outcome = apply_mod.set_wallpaper(target)
+    warnings = [] if outcome is not None else ["wallpaperFailed"]
+    if args.json:
+        print(json.dumps({"schema": 1, "status": "set" if outcome else "failed",
+                          "theme": theme.slug, "wallpaper": args.wallpaper_id,
+                          "warnings": warnings}, indent=2))
+        return 0 if outcome is not None else 1
+    print("background: %s (%s)" % (args.wallpaper_id, outcome or "failed"))
+    return 0 if outcome is not None else 1
 
 
 def cmd_render(args):
@@ -211,6 +355,45 @@ def cmd_doctor(args):
     return 0
 
 
+def cmd_theme_install(args):
+    """Install a theme from a GitHub repository as one or more packs.
+
+    Only `colors.toml` and `backgrounds/` travel from the repository: the rest
+    of an Omarchy theme is that desktop's generated files, not a palette. The
+    URL is the one argument a caller supplies, so it is validated here before
+    git runs and again by the clone's own transport restriction.
+    """
+    try:
+        result = install_mod.install(args.url, slug=args.slug,
+                                     all_themes=args.all, force=args.force)
+    except (install_mod.InstallError, OSError) as exc:
+        die(str(exc))
+    if args.json:
+        print(json.dumps({"schema": 1, "status": "installed",
+                          "packs": result["packs"]}, indent=2))
+        return 0
+    for pack in result["packs"]:
+        count = pack["wallpapers"]
+        print("%s %s (%s) with %d wallpaper%s" % (
+            "reinstalled" if pack["replaced"] else "installed",
+            pack["slug"], pack["name"], count, "" if count == 1 else "s"))
+    return 0
+
+
+def cmd_theme_uninstall(args):
+    """Remove a pack from the collection. Never removes the active one."""
+    try:
+        result = install_mod.uninstall(args.slug)
+    except (install_mod.InstallError, OSError) as exc:
+        die(str(exc))
+    if args.json:
+        print(json.dumps({"schema": 1, "status": "removed",
+                          "slug": result["slug"]}, indent=2))
+        return 0
+    print("removed %s" % result["slug"])
+    return 0
+
+
 def cmd_script(args):
     script = paths.repo_root() / ("%s.sh" % args.action)
     if not script.is_file():
@@ -236,6 +419,18 @@ def build_parser():
     dump.add_argument("--json", action="store_true")
     dump.set_defaults(handler=cmd_dump)
 
+    catalog_cmd = sub.add_parser("catalog", help="print every pack's resolved palette")
+    catalog_cmd.add_argument("--json", action="store_true")
+    catalog_cmd.set_defaults(handler=cmd_catalog)
+
+    apply_cmd = sub.add_parser("apply", help="apply one pack after checking its palette")
+    apply_cmd.add_argument("slug")
+    apply_cmd.add_argument("--expected-palette", required=True)
+    apply_cmd.add_argument("--background", metavar="ID",
+                           help="also set this wallpaper from the pack")
+    apply_cmd.add_argument("--json", action="store_true")
+    apply_cmd.set_defaults(handler=cmd_apply)
+
     initial = sub.add_parser("set", help="apply a theme pack")
     initial.add_argument("slug")
     initial.add_argument("--no-wallpaper", action="store_true")
@@ -258,6 +453,12 @@ def build_parser():
     background.add_argument("--slug")
     background.set_defaults(handler=cmd_bg_next)
 
+    wallpaper = sub.add_parser("wallpaper", help="set one wallpaper from a pack")
+    wallpaper.add_argument("slug")
+    wallpaper.add_argument("--id", required=True, dest="wallpaper_id", metavar="ID")
+    wallpaper.add_argument("--json", action="store_true")
+    wallpaper.set_defaults(handler=cmd_wallpaper)
+
     render_cmd = sub.add_parser("render", help="render a pack's files without applying")
     render_cmd.add_argument("slug", nargs="?")
     render_cmd.add_argument("--state")
@@ -272,6 +473,22 @@ def build_parser():
         script = sub.add_parser(action, help=help_text)
         script.add_argument("rest", nargs=argparse.REMAINDER)
         script.set_defaults(handler=cmd_script, action=action)
+
+    fetch = sub.add_parser("theme-install",
+                           help="install a theme pack from a GitHub repository")
+    fetch.add_argument("url", help="https://github.com/<owner>/<repo>")
+    fetch.add_argument("--slug", help="name the pack instead of deriving it from the repo")
+    fetch.add_argument("--all", action="store_true",
+                       help="install every theme the repository states")
+    fetch.add_argument("--force", action="store_true",
+                       help="replace a pack this command did not install")
+    fetch.add_argument("--json", action="store_true")
+    fetch.set_defaults(handler=cmd_theme_install)
+
+    remove = sub.add_parser("theme-uninstall", help="remove an installed theme pack")
+    remove.add_argument("slug")
+    remove.add_argument("--json", action="store_true")
+    remove.set_defaults(handler=cmd_theme_uninstall)
     return parser
 
 

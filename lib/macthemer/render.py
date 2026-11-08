@@ -57,6 +57,27 @@ def colors_toml(theme):
     return "\n".join(lines) + "\n"
 
 
+def palette_entry(theme, tokens, bar):
+    """One pack's resolved palette as a catalog entry.
+
+    This is `resolved` minus the three keys that describe a file artifact
+    rather than a theme: `generated_by`, `pack` and `backgrounds`. A catalog
+    is published as data, so it must not carry paths and must not depend on
+    which pack is currently applied.
+    """
+    return {
+        "schema": 1,
+        "slug": theme.slug,
+        "name": theme.name,
+        "variant": theme.variant,
+        "alpha_byte": alpha_byte(theme.bar.get("background_alpha", 0.902)),
+        "palette": {key: theme.palette[key] for key in sorted(theme.palette)},
+        "tokens": {key: tokens[key] for key in sorted(tokens)},
+        "border": {"active": theme.border["active"], "inactive": theme.border["inactive"]},
+        "bar": {key: bar[key] for key in sorted(bar)},
+    }
+
+
 def resolved(theme, tokens, bar):
     """The machine-readable palette every app-facing consumer reads.
 
@@ -64,22 +85,23 @@ def resolved(theme, tokens, bar):
     named border and bar colours in one place, so an app needs no theme logic
     of its own and no shell parsing: point a file watcher at it and repaint.
     """
+    entry = palette_entry(theme, tokens, bar)
     return {
-        "schema": 1,
+        "schema": entry["schema"],
         "generated_by": "mac-themer %s" % __version__,
-        "slug": theme.slug,
-        "name": theme.name,
-        "variant": theme.variant,
+        "slug": entry["slug"],
+        "name": entry["name"],
+        "variant": entry["variant"],
         # Relative to the repo on purpose: a resolved palette is a published
         # artifact and consumers read it from the state directory, so it must
         # not carry this machine's paths.
         "pack": "themes/%s" % theme.slug,
         "backgrounds": "themes/%s/backgrounds" % theme.slug,
-        "alpha_byte": alpha_byte(theme.bar.get("background_alpha", 0.902)),
-        "palette": {key: theme.palette[key] for key in sorted(theme.palette)},
-        "tokens": {key: tokens[key] for key in sorted(tokens)},
-        "border": {"active": theme.border["active"], "inactive": theme.border["inactive"]},
-        "bar": {key: bar[key] for key in sorted(bar)},
+        "alpha_byte": entry["alpha_byte"],
+        "palette": entry["palette"],
+        "tokens": entry["tokens"],
+        "border": entry["border"],
+        "bar": entry["bar"],
     }
 
 
